@@ -1,0 +1,29 @@
+go:
+    # When compiling nvidia gpu collector using go-nvml bindings 
+    version: 1.21
+    cgo: true
+repository:
+    path: github.com/prometheus/node_exporter
+build:
+    binaries:
+        - name: node_exporter
+    flags: -a -tags netgo,osusergo,static_build,nvgpu
+    static: false
+    ldflags: |
+        -X github.com/prometheus/common/version.Version={{.Version}}
+        -X github.com/prometheus/common/version.Revision={{.Revision}}
+        -X github.com/prometheus/common/version.Branch={{.Branch}}
+        -X github.com/prometheus/common/version.BuildUser={{user}}@{{host}}
+        -X github.com/prometheus/common/version.BuildDate={{date "20060102-15:04:05"}}
+tarball:
+    files:
+        - LICENSE
+        - NOTICE
+crossbuild:
+    platforms:
+        - linux
+        - openbsd/amd64
+        - darwin/amd64
+        - darwin/arm64
+        - netbsd/amd64
+        - netbsd/386

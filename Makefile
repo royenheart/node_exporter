@@ -58,6 +58,11 @@ else
 	endif
 endif
 
+# When NVGPU feature is on, change another setting
+ifeq ($(NVGPU), on)
+	PROMU_CONF = .promu-nvgpu.yml
+endif
+
 PROMU := $(FIRST_GOPATH)/bin/promu --config $(PROMU_CONF)
 
 e2e-out-64k-page = collector/fixtures/e2e-64k-page-output.txt
