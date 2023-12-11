@@ -28,7 +28,6 @@ import (
 )
 
 type nvgpuCollector struct {
-	// devices        []nvml.Device
 	gpuSysInfo     *prometheus.Desc
 	gpuInfo        *prometheus.Desc
 	gpuMinFanSpeed *prometheus.Desc
@@ -39,11 +38,13 @@ type nvgpuCollector struct {
 	gpuMemTotal    *prometheus.Desc
 	gpuMemUsed     *prometheus.Desc
 	gpuMemFree     *prometheus.Desc
+	gpuAppClk      *prometheus.Desc
+	gpuClk         *prometheus.Desc
+	gpuComputeMode *prometheus.Desc
+	gpuPerf        *prometheus.Desc
+	gpuPersisMode  *prometheus.Desc
+	gpuUtil        *prometheus.Desc
 	logger         log.Logger
-	// gpuClk     *prometheus.Desc
-	// gpuPerf    *prometheus.Desc
-	// gpuMemVersion  *prometheus.Desc
-	// gpuMemReserved *prometheus.Desc
 }
 
 const (
@@ -62,7 +63,6 @@ func init() {
 
 func NewNVGPUCollector(logger log.Logger) (Collector, error) {
 	c := &nvgpuCollector{
-		// devices: devices,
 		gpuSysInfo: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "sysinfo"),
 			"System information from nvml.",
@@ -73,11 +73,36 @@ func NewNVGPUCollector(logger log.Logger) (Collector, error) {
 			"GPU information from nvml.",
 			[]string{"index", "uuid", "name", "bus_type"}, nil,
 		),
-		// gpuClk: prometheus.NewDesc(
-		// 	prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "clk"),
-		// 	"GPU Clock information from nvml.",
-		// 	[]string{"index", "type"}, nil,
-		// ),
+		gpuAppClk: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "appclk"),
+			"GPU Applications Clock information from nvml.",
+			[]string{"index", "type"}, nil,
+		),
+		gpuClk: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "clk"),
+			"GPU Clock information from nvml.",
+			[]string{"index", "type", "id"}, nil,
+		),
+		gpuComputeMode: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "compute_mode"),
+			"GPU Compute Mode information from nvml.",
+			[]string{"index", "mode"}, nil,
+		),
+		gpuPerf: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "perf"),
+			"GPU Performance State information from nvml.",
+			[]string{"index", "state"}, nil,
+		),
+		gpuPersisMode: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "persis_mode"),
+			"GPU Persistence Mode information from nvml.",
+			[]string{"index", "mode"}, nil,
+		),
+		gpuUtil: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "util"),
+			"GPU Utilization Rates information from nvml.",
+			[]string{"index", "type"}, nil,
+		),
 		gpuMinFanSpeed: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "min_fan_speed"),
 			"GPU Min Fan Speed from nvml.",
@@ -103,11 +128,6 @@ func NewNVGPUCollector(logger log.Logger) (Collector, error) {
 			"GPU Power Usage information from nvml (Watts).",
 			[]string{"index"}, nil,
 		),
-		// gpuMemVersion: prometheus.NewDesc(
-		// 	prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "mem_version"),
-		// 	"GPU Memory Version from nvml.",
-		// 	[]string{"index"}, nil,
-		// ),
 		gpuMemTotal: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "mem_total"),
 			"GPU Memory Total from nvml (bytes).",
@@ -123,11 +143,6 @@ func NewNVGPUCollector(logger log.Logger) (Collector, error) {
 			"GPU Memory Free from nvml (bytes).",
 			[]string{"index"}, nil,
 		),
-		// gpuMemReserved: prometheus.NewDesc(
-		// 	prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "mem_reserved"),
-		// 	"GPU Memory Reserved from nvml.",
-		// 	[]string{"index"}, nil,
-		// ),
 		logger: logger,
 	}
 	return c, nil
@@ -192,6 +207,8 @@ func (c *nvgpuCollector) Update(ch chan<- prometheus.Metric) error {
 	for indexI, d := range devices {
 		index := strconv.Itoa(indexI)
 
+		// Get GPU Info
+
 		if *enableNVGPUInfo {
 			uuid, ret := d.GetUUID()
 			if ret != nvml.SUCCESS {
@@ -217,6 +234,8 @@ func (c *nvgpuCollector) Update(ch chan<- prometheus.Metric) error {
 				busType,
 			)
 		}
+
+		// Get Fan Info
 
 		if *enableNVGPUFan {
 			fanNums, ret := d.GetNumFans()
@@ -259,10 +278,113 @@ func (c *nvgpuCollector) Update(ch chan<- prometheus.Metric) error {
 			}
 		}
 
+		// Get Clock Info
+
+		for t := 0; t < int(nvml.CLOCK_COUNT); t++ {
+			appclk, ret := d.GetApplicationsClock(nvml.ClockType(t))
+			switch ret {
+			case nvml.ERROR_NOT_SUPPORTED:
+				level.Debug(c.logger).Log("msg", fmt.Sprintf("GPU %v not support App Clock Type %v", index, getClockTypeString(t)))
+			case nvml.SUCCESS:
+				ch <- prometheus.MustNewConstMetric(
+					c.gpuAppClk,
+					prometheus.GaugeValue,
+					float64(appclk),
+					index,
+					getClockTypeString(t),
+				)
+			default:
+				return fmt.Errorf("unable to get GPU %v Applications Clock Type %v Info: %v", index, getClockTypeString(t), nvml.ErrorString(ret))
+			}
+			for tt := 0; tt < int(nvml.CLOCK_ID_COUNT); tt++ {
+				clk, ret := d.GetClock(nvml.ClockType(t), nvml.ClockId(tt))
+				switch ret {
+				case nvml.ERROR_NOT_SUPPORTED:
+					level.Debug(c.logger).Log("msg", fmt.Sprintf("GPU %v not support Clock Type %v with Clock ID %v", index, getClockTypeString(t), getClockIDString(tt)))
+				case nvml.SUCCESS:
+					ch <- prometheus.MustNewConstMetric(
+						c.gpuClk,
+						prometheus.GaugeValue,
+						float64(clk),
+						index,
+						getClockTypeString(t),
+						getClockIDString(tt),
+					)
+				default:
+					return fmt.Errorf("unable to get GPU %v Clock Type %v ID %v Info: %v", index, getClockTypeString(t), getClockIDString(tt), nvml.ErrorString(ret))
+				}
+			}
+		}
+
+		// Get Compute Mode
+
+		compute_m, ret := d.GetComputeMode()
+		if ret != nvml.SUCCESS {
+			return fmt.Errorf("unable to get GPU %v Compute Mode Info: %v", index, nvml.ErrorString(ret))
+		}
+		ch <- prometheus.MustNewConstMetric(
+			c.gpuComputeMode,
+			prometheus.GaugeValue,
+			1,
+			index,
+			getComputeModeString(compute_m),
+		)
+
+		// Get Performance State
+
+		perf_state, ret := d.GetPerformanceState()
+		if ret != nvml.SUCCESS {
+			return fmt.Errorf("unable to get GPU %v Performance State Info: %v", index, nvml.ErrorString(ret))
+		}
+		ch <- prometheus.MustNewConstMetric(
+			c.gpuPerf,
+			prometheus.GaugeValue,
+			1,
+			index,
+			getPstatesString(perf_state),
+		)
+
+		// Get Persistence Mode
+
+		persis_mode, ret := d.GetPersistenceMode()
+		if ret != nvml.SUCCESS {
+			return fmt.Errorf("unable to get GPU %v Persistence Mode Info: %v", index, nvml.ErrorString(ret))
+		}
+		ch <- prometheus.MustNewConstMetric(
+			c.gpuPersisMode,
+			prometheus.GaugeValue,
+			1,
+			index,
+			getPersisModeString(persis_mode),
+		)
+
+		// Get GPU Utilization
+
+		util, ret := d.GetUtilizationRates()
+		if ret != nvml.SUCCESS {
+			return fmt.Errorf("unable to get GPU %v Utilization Info: %v", index, nvml.ErrorString(ret))
+		}
+		ch <- prometheus.MustNewConstMetric(
+			c.gpuUtil,
+			prometheus.GaugeValue,
+			float64(util.Gpu),
+			index,
+			"GPU",
+		)
+		ch <- prometheus.MustNewConstMetric(
+			c.gpuUtil,
+			prometheus.GaugeValue,
+			float64(util.Memory),
+			index,
+			"MEMORY",
+		)
+
+		// Get Temperature Info
+
 		for t := 0; t < int(nvml.TEMPERATURE_COUNT); t++ {
 			temp, ret := d.GetTemperature(nvml.TemperatureSensors(t))
 			if ret != nvml.SUCCESS {
-				return fmt.Errorf("unable to get GPU %v Temperature Sensor %d Value: %v", index, t, nvml.ErrorString(ret))
+				return fmt.Errorf("unable to get GPU %v Temperature Sensor %v Value: %v", index, getTemperatureSensorString(t), nvml.ErrorString(ret))
 			}
 			ch <- prometheus.MustNewConstMetric(
 				c.gpuTemp,
@@ -272,6 +394,8 @@ func (c *nvgpuCollector) Update(ch chan<- prometheus.Metric) error {
 				getTemperatureSensorString(t),
 			)
 		}
+
+		// Get Power Info
 
 		power, ret := d.GetPowerUsage()
 		if ret != nvml.SUCCESS {
@@ -285,8 +409,10 @@ func (c *nvgpuCollector) Update(ch chan<- prometheus.Metric) error {
 		)
 
 		/*
+			Get Memory Info
 			GetMemoryInfo_v2() could not correctly show the memory info in some situation.
 		*/
+
 		mem, ret := d.GetMemoryInfo()
 		if ret != nvml.SUCCESS {
 			return fmt.Errorf("unable to get GPU %v Memory Info: %v", index, nvml.ErrorString(ret))
@@ -328,6 +454,67 @@ func getBusTypeString(busT nvml.BusType) string {
 		return "UNKNOWN"
 	default:
 		return "UNKNOWN"
+	}
+}
+
+func getClockTypeString[T int | int32 | nvml.ClockType](typeN T) string {
+	switch typeN {
+	case T(nvml.CLOCK_GRAPHICS):
+		return "GRAPHICS"
+	case T(nvml.CLOCK_SM):
+		return "SM"
+	case T(nvml.CLOCK_MEM):
+		return "MEM"
+	case T(nvml.CLOCK_VIDEO):
+		return "VIDEO"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func getClockIDString[T int | int32 | nvml.ClockId](typeN T) string {
+	switch typeN {
+	case T(nvml.CLOCK_ID_CURRENT):
+		return "CURRENT"
+	case T(nvml.CLOCK_ID_APP_CLOCK_TARGET):
+		return "APP CLOCK TARGET"
+	case T(nvml.CLOCK_ID_APP_CLOCK_DEFAULT):
+		return "APP CLOCK DEFAULT"
+	case T(nvml.CLOCK_ID_CUSTOMER_BOOST_MAX):
+		return "CUSTOMER BOOST MAX"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func getComputeModeString[T int | int32 | nvml.ComputeMode](modeN T) string {
+	switch modeN {
+	case T(nvml.COMPUTEMODE_DEFAULT):
+		return "DEFAULT"
+	case T(nvml.COMPUTEMODE_EXCLUSIVE_THREAD):
+		return "EXCLUSIVE THREAD"
+	case T(nvml.COMPUTEMODE_PROHIBITED):
+		return "PROHIBITED"
+	case T(nvml.COMPUTEMODE_EXCLUSIVE_PROCESS):
+		return "EXCLUSIVE PROCESS"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func getPstatesString[T int | int32 | nvml.Pstates](stateN T) string {
+	if nvml.PSTATE_UNKNOWN != nvml.Pstates(stateN) {
+		return fmt.Sprintf("P%d", int(stateN))
+	} else {
+		return "UNKNOWN"
+	}
+}
+
+func getPersisModeString[T int | int32 | nvml.EnableState](stateN T) string {
+	if nvml.EnableState(stateN) == nvml.FEATURE_DISABLED {
+		return "OFF"
+	} else {
+		return "ON"
 	}
 }
 
