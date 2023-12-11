@@ -28,23 +28,24 @@ import (
 )
 
 type nvgpuCollector struct {
-	gpuSysInfo     *prometheus.Desc
-	gpuInfo        *prometheus.Desc
-	gpuMinFanSpeed *prometheus.Desc
-	gpuMaxFanSpeed *prometheus.Desc
-	gpuFanSpeed    *prometheus.Desc
-	gpuTemp        *prometheus.Desc
-	gpuPowerUsage  *prometheus.Desc
-	gpuMemTotal    *prometheus.Desc
-	gpuMemUsed     *prometheus.Desc
-	gpuMemFree     *prometheus.Desc
-	gpuAppClk      *prometheus.Desc
-	gpuClk         *prometheus.Desc
-	gpuComputeMode *prometheus.Desc
-	gpuPerf        *prometheus.Desc
-	gpuPersisMode  *prometheus.Desc
-	gpuUtil        *prometheus.Desc
-	logger         log.Logger
+	gpuSysInfo           *prometheus.Desc
+	gpuInfo              *prometheus.Desc
+	gpuMinFanSpeed       *prometheus.Desc
+	gpuMaxFanSpeed       *prometheus.Desc
+	gpuFanSpeed          *prometheus.Desc
+	gpuTemp              *prometheus.Desc
+	gpuPowerUsage        *prometheus.Desc
+	gpuPowerEnforceLimit *prometheus.Desc
+	gpuMemTotal          *prometheus.Desc
+	gpuMemUsed           *prometheus.Desc
+	gpuMemFree           *prometheus.Desc
+	gpuAppClk            *prometheus.Desc
+	gpuClk               *prometheus.Desc
+	gpuComputeMode       *prometheus.Desc
+	gpuPerf              *prometheus.Desc
+	gpuPersisMode        *prometheus.Desc
+	gpuUtil              *prometheus.Desc
+	logger               log.Logger
 }
 
 const (
@@ -75,12 +76,12 @@ func NewNVGPUCollector(logger log.Logger) (Collector, error) {
 		),
 		gpuAppClk: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "appclk"),
-			"GPU Applications Clock information from nvml.",
+			"GPU Applications Clock information from nvml.  (MHz)",
 			[]string{"index", "type"}, nil,
 		),
 		gpuClk: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "clk"),
-			"GPU Clock information from nvml.",
+			"GPU Clock information from nvml. (MHz)",
 			[]string{"index", "type", "id"}, nil,
 		),
 		gpuComputeMode: prometheus.NewDesc(
@@ -100,17 +101,17 @@ func NewNVGPUCollector(logger log.Logger) (Collector, error) {
 		),
 		gpuUtil: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "util"),
-			"GPU Utilization Rates information from nvml.",
+			"GPU Utilization Rates information from nvml. (percentage)",
 			[]string{"index", "type"}, nil,
 		),
 		gpuMinFanSpeed: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "min_fan_speed"),
-			"GPU Min Fan Speed from nvml.",
+			"GPU Min Fan Speed from nvml. (rpm)",
 			[]string{"index"}, nil,
 		),
 		gpuMaxFanSpeed: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "max_fan_speed"),
-			"GPU Max Fan Speed from nvml.",
+			"GPU Max Fan Speed from nvml. (rpm)",
 			[]string{"index"}, nil,
 		),
 		gpuFanSpeed: prometheus.NewDesc(
@@ -125,22 +126,27 @@ func NewNVGPUCollector(logger log.Logger) (Collector, error) {
 		),
 		gpuPowerUsage: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "power_usage"),
-			"GPU Power Usage information from nvml (Watts).",
+			"GPU Power Usage information from nvml (milliwatt).",
+			[]string{"index"}, nil,
+		),
+		gpuPowerEnforceLimit: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "power_enforce_limit"),
+			"GPU Power Enforced Limitation information from nvml (milliwatt).",
 			[]string{"index"}, nil,
 		),
 		gpuMemTotal: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "mem_total"),
-			"GPU Memory Total from nvml (bytes).",
+			"GPU Memory Total from nvml (bytes IEC).",
 			[]string{"index"}, nil,
 		),
 		gpuMemUsed: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "mem_used"),
-			"GPU Memory Used from nvml (bytes).",
+			"GPU Memory Used from nvml (bytes IEC).",
 			[]string{"index"}, nil,
 		),
 		gpuMemFree: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "mem_free"),
-			"GPU Memory Free from nvml (bytes).",
+			"GPU Memory Free from nvml (bytes IEC).",
 			[]string{"index"}, nil,
 		),
 		logger: logger,
@@ -407,6 +413,20 @@ func (c *nvgpuCollector) Update(ch chan<- prometheus.Metric) error {
 			float64(power),
 			index,
 		)
+		enforce_limit, ret := d.GetEnforcedPowerLimit()
+		switch ret {
+		case nvml.ERROR_NOT_SUPPORTED:
+			level.Debug(c.logger).Log("msg", fmt.Sprintf("GPU %v not support Enforced Power Limitation", index))
+		case nvml.SUCCESS:
+			ch <- prometheus.MustNewConstMetric(
+				c.gpuPowerEnforceLimit,
+				prometheus.GaugeValue,
+				float64(enforce_limit),
+				index,
+			)
+		default:
+			return fmt.Errorf("unable to get GPU %v Power Enforced Limitation Value: %v", index, nvml.ErrorString(ret))
+		}
 
 		/*
 			Get Memory Info
