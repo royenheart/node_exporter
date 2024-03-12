@@ -76,7 +76,7 @@ func NewNVGPUCollector(logger log.Logger) (Collector, error) {
 		),
 		gpuAppClk: prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, nvgpuCollectorSubsystem, "appclk"),
-			"GPU Applications Clock information from nvml.  (MHz)",
+			"GPU Applications Clock information from nvml. (MHz)",
 			[]string{"index", "type"}, nil,
 		),
 		gpuClk: prometheus.NewDesc(
